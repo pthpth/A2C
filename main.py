@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Dense
-from tensorflow.keras.activations import sigmoid
+from tensorflow.keras.activations import sigmoid, softmax
 import gym
 
 
@@ -13,34 +13,44 @@ class A3C:
         self.memory_buffer = 2000
         self.state_size = state_size
         self.gamma = 0.5
-        self.probs = []
-        self.actions = []
-        self.rewards = []
+        self.probs = tf.convert_to_tensor([])
+        self.actions = tf.convert_to_tensor([])
+        self.rewards = tf.convert_to_tensor([])
+        self.log_probs = tf.convert_to_tensor([])
 
     def model_maker(self):
         model = tf.keras.Sequetial(
             Dense(units=100, input_dim=self.state_size, activation="relu"),
             Dense(units=50, activation="relu"),
-            Dense(units=self.n_actions, activation=sigmoid)
+            Dense(units=self.n_actions, activation=softmax)
         )
 
     def compute_action(self, model, state):
         probs = model.predict(state)
         action = np.random.choice(self.n_actions, p=probs)
-        self.probs.append(probs)
-        self.actions.append(action)
+        self.probs.concat(probs[action])
+        self.log_probs.concat(probs[action])
+        self.actions.concat(action)
 
     def store_reward(self, reward):
-        self.rewards.append(reward)
+        self.rewards.concat(reward)
 
     def discounted_rwds(self):
-        discounted_rewards = []
-        for x in range(len(self.rewards)):
-            Gt = 0
-            dsc = 0
+        discounted_rewards = tf.convert_to_tensor([])
+        for x in range(self.rewards.shape[0]):
+            Gt = tf.Variable(0)
+            dsc = tf.Variable(0)
             for y in self.rewards[x:]:
-                Gt=Gt+self.gamma**dsc*y
-            discounted_rewards.append(Gt)
+                Gt = Gt + self.gamma ** dsc * y
+                dsc += 1
+            discounted_rewards.concat(Gt)
+        return discounted_rewards
+
+    def grads(self, rewards_dsc):
+        grads = rewards_dsc * self.log_probs
+        grads = grads.sum()
+        return grads
+
 
 """The Actor-Critic is basically like the brain of the A3C model. At it’s core it implements deep convolution Q learning
 , however the neural network now outputs two different items. The Actor and the Critic.
