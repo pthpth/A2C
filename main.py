@@ -1,6 +1,3 @@
-"""
-Simple policy gradient in Keras
-"""
 import gym
 import numpy as np
 import tensorflow as tf
@@ -20,17 +17,29 @@ class Agent(object):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.X = layers.Input(shape=(input_dim,))
-        net = self.X
-        net = layers.Dense(100)(net)
-        net = layers.Activation("relu")(net)
-        net = layers.Dense(50)(net)
-        net = layers.Activation("relu")(net)
-        net = layers.Dense(output_dim)(net)
-        net = layers.Activation("softmax")(net)
-        self.model = Model(inputs=self.X, outputs=net)
+
+        critic_net = self.X
+        critic_net = layers.Dense(100)(critic_net)
+        critic_net = layers.Activation("relu")(critic_net)
+        critic_net = layers.Dense(50)(critic_net)
+        critic_net = layers.Activation("relu")(critic_net)
+        critic_net = layers.Dense(1)(critic_net)
+
+        self.critic_model = Model(inputs=self.X, outputs=critic_net)
+
+        actor_net = self.X
+        actor_net = layers.Dense(100)(actor_net)
+        actor_net = layers.Activation("relu")(actor_net)
+        actor_net = layers.Dense(50)(actor_net)
+        actor_net = layers.Activation("relu")(actor_net)
+        actor_net = layers.Dense(output_dim)(actor_net)
+        actor_net = layers.Activation("softmax")(actor_net)
+
+        self.actor_model = Model(inputs=self.X, outputs=actor_net)
         # this is our model whicih takes in self.X as input (having shape as (input_dims,)) and gives net (whose
         # procedure is explained in above lines)
-        action_prob_placeholder = self.model.output
+        action_prob_placeholder = self.actor_model.output
+        value_placeholder = self.critic_model.output
         # the output is a softmax latyer of actions probability
 
         # placeholders are variables (in form of tensors) which can be used in the computation graphs
@@ -43,48 +52,60 @@ class Agent(object):
         # grads for the NN
         discount_reward_placeholder = K.placeholder(shape=(None,),
                                                     name="discount_reward")
+
+        advantage_placeholder = discount_reward_placeholder - value_placeholder
         # findinng the probability of the action taken in that time step n the trajectory
         action_prob = K.sum(action_prob_placeholder * action_onehot_placeholder, axis=1)
         log_action_prob = K.log(action_prob)
         # this is the function we have minimize (its actually maximize thats why the negative sign)
-        loss = - log_action_prob * discount_reward_placeholder
-        loss = K.mean(loss)
+        actor_loss = - log_action_prob * advantage_placeholder
+        actor_loss = K.mean(actor_loss)
         adam = Adam()
+
+        critic_loss = advantage_placeholder ** 2 * 0.5
+        critic_loss = K.mean(critic_loss)
+        adam2 = Adam()
         # defining the update process, params tells which all parameters to update , loss is the the loss function
         # which is to be minimized
-        updates = adam.get_updates(params=self.model.trainable_weights,
-                                   loss=loss)
+        actor_updates = adam.get_updates(params=self.actor_model.trainable_weights, loss=actor_loss)
+        critic_updates = adam2.get_updates(params=self.critic_model.trainable_weights, loss=critic_loss)
         # definig the train function - take self.model.input as input and action_hot_placeholder,
         # discount_onehot_placeholder as input and then call the Adam optimizer to calculte the loss from the
         # procedure explained above and the output of the model which is to be trained is self.model.outputs get
         # updates from updates variable above
-        self.train_fn = K.function(inputs=[self.model.input,
-                                           action_onehot_placeholder,
-                                           discount_reward_placeholder],
-                                   outputs=[self.model.outputs],
-                                   updates=updates)
+        self.actor_train_fn = K.function(inputs=[self.actor_model.input,
+                                                 action_onehot_placeholder,
+                                                 discount_reward_placeholder],
+                                         outputs=[self.actor_model.outputs],
+                                         updates=actor_updates)
+        self.critic_train_fn = K.function(inputs=[self.critic_model.input, discount_reward_placeholder],
+                                          outputs=[self.critic_model.outputs], updates=critic_updates)
 
     def get_action(self, state):
         shape = state.shape
-        action_prob = np.squeeze(self.model.predict(state))
-        return np.random.choice(np.arange(self.output_dim), p=action_prob)
+        action_prob = np.squeeze(self.actor_model.predict(state))
+        # print(action_prob)
+        state_value = np.squeeze(self.critic_model.predict(state))
+        # print(action_prob)
+        return np.random.choice(np.arange(self.output_dim), p=action_prob), state_value
 
-    def fit(self, S, action_list, reward_list):
+    def fit(self, state_list, action_list, reward_list, value_list):
         # action_list is the list of actions taken in the episode
         # converting it to one hot vector
         action_onehot = np_utils.to_categorical(action_list, num_classes=self.output_dim)
-        discount_reward = compute_discounted_R(reward_list)
+        discounted_r = compute_dicounted_R(reward_list)
         # as defined above it takes in states,action_hot,discount_reward
-        self.train_fn([S, action_onehot, discount_reward])
+        self.actor_train_fn([state_list, action_onehot, discounted_r])
+        self.critic_train_fn([state_list, discounted_r])
 
 
-def compute_discounted_R(R, discount_rate=.99):
+def compute_dicounted_R(R, discount_rate=.99):
     discounted_r = np.zeros_like(R, dtype=np.float32)
     running_add = 0
     for t in reversed(range(len(R))):
         running_add = running_add * discount_rate + R[t]
         discounted_r[t] = running_add
-    discounted_r -= (discounted_r.mean() / discounted_r.std())
+    discounted_r = (discounted_r - discounted_r.mean()+1e-12) / (discounted_r.std() + 1e-12)
     return discounted_r
 
 
@@ -93,13 +114,16 @@ def run_episode(env, agent):
     state_list = []
     action_list = []
     reward_list = []
+    value_list = []
     curr_state = env.reset()
     total_reward = 0
+    # print(agent.critic_model.weights)
     while not done:
         env.render()
-        action = agent.get_action(np.asarray([curr_state]))
+        action, value = agent.get_action(np.asarray([curr_state]))
         next_state, reward, done, info = env.step(action)
         total_reward += reward
+        value_list.append(value)
         state_list.append(curr_state)
         action_list.append(action)
         reward_list.append(reward)
@@ -109,9 +133,9 @@ def run_episode(env, agent):
             state_list = np.array(state_list)
             action_list = np.array(action_list)
             reward_list = np.array(reward_list)
-
-            agent.fit(state_list, action_list, reward_list)
-
+            value_list = np.array(value_list)
+            agent.fit(state_list, action_list, reward_list, value_list)
+    # print(agent.critic_model.weights)
     return total_reward
 
 
