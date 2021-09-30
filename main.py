@@ -18,22 +18,22 @@ class Agent(object):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.X = layers.Input(shape=(input_dim,))
-
+        initializer = tf.keras.initializers.RandomNormal(mean=0., stddev=1.)
         critic_net = self.X
-        critic_net = layers.Dense(40)(critic_net)
+        critic_net = layers.Dense(40,kernel_initializer=initializer)(critic_net)
         critic_net = layers.Activation("relu")(critic_net)
-        critic_net = layers.Dense(10)(critic_net)
+        critic_net = layers.Dense(10,kernel_initializer=initializer)(critic_net)
         critic_net = layers.Activation("relu")(critic_net)
-        critic_net = layers.Dense(1)(critic_net)
+        critic_net = layers.Dense(1,kernel_initializer=initializer)(critic_net)
 
         self.critic_model = Model(inputs=self.X, outputs=critic_net)
 
         actor_net = self.X
-        actor_net = layers.Dense(40)(actor_net)
+        actor_net = layers.Dense(40,kernel_initializer=initializer)(actor_net)
         actor_net = layers.Activation("relu")(actor_net)
-        actor_net = layers.Dense(20)(actor_net)
+        actor_net = layers.Dense(20,kernel_initializer=initializer)(actor_net)
         actor_net = layers.Activation("relu")(actor_net)
-        actor_net = layers.Dense(output_dim)(actor_net)
+        actor_net = layers.Dense(output_dim,kernel_initializer=initializer)(actor_net)
         actor_net = layers.Activation("softmax")(actor_net)
 
         self.actor_model = Model(inputs=self.X, outputs=actor_net)
@@ -61,12 +61,12 @@ class Agent(object):
         log_action_prob = K.log(action_prob)
         # this is the function we have minimize (its actually maximize thats why the negative sign)
         actor_loss = - log_action_prob * advantage_placeholder
-        actor_loss = K.mean(actor_loss) + 0.001 * entropy_placeholder
-        adam = Adam(learning_rate=0.01)
+        actor_loss = K.mean(actor_loss-0.005 * entropy_placeholder)
+        adam = Adam(learning_rate=0.001)
 
         critic_loss = advantage_placeholder ** 2 * 0.5
-        critic_loss = K.mean(critic_loss) + 0.001 * entropy_placeholder
-        adam2 = Adam(learning_rate=0.01)
+        critic_loss = K.mean(critic_loss)
+        adam2 = Adam(learning_rate=0.001)
         # defining the update process, params tells which all parameters to update , loss is the the loss function
         # which is to be minimized
         actor_updates = adam.get_updates(params=self.actor_model.trainable_weights, loss=actor_loss)
@@ -91,7 +91,7 @@ class Agent(object):
         state_value = np.squeeze(self.critic_model.predict(state))
         # print(state_value)
         return np.random.choice(np.arange(self.output_dim), p=action_prob), -np.sum(
-            np.mean(action_prob) * np.log(action_prob + 1e-12))
+            np.mean(action_prob) * np.log(action_prob+1e-12))
 
     def fit(self, state_list, action_list, reward_list, entropy):
         # action_list is the list of actions taken in the episode
@@ -99,6 +99,7 @@ class Agent(object):
         action_onehot = np_utils.to_categorical(action_list, num_classes=self.output_dim)
         discounted_r = compute_dicounted_R(reward_list)
         # as defined above it takes in states,action_hot,discount_reward
+        print(entropy)
         self.actor_train_fn([state_list, action_onehot, discounted_r, entropy])
         self.critic_train_fn([state_list, discounted_r, entropy])
 
@@ -109,7 +110,7 @@ def compute_dicounted_R(R, discount_rate=.99):
     for t in reversed(range(len(R))):
         running_add = running_add * discount_rate + R[t]
         discounted_r[t] = running_add
-    discounted_r = (discounted_r - discounted_r.mean() + 1e-12) / (discounted_r.std() + 1e-12)
+    discounted_r = (discounted_r - discounted_r.mean()) / (discounted_r.std()+1e-18)
     return discounted_r
 
 
@@ -123,9 +124,9 @@ def run_episode(env, agent):
     total_reward = 0
     while not done:
         # print(agent.critic_model.layers[0].weights[0])
-        # env.render()
         action, entropy_curr = agent.get_action(np.asarray([curr_state]))
         entropy += entropy_curr
+        # print(entropy)
         next_state, reward, done, info = env.step(action)
         total_reward += reward
         # print(action,)
@@ -144,12 +145,13 @@ def run_episode(env, agent):
 
 
 def main():
-    env = gym.make("Assault-ram-v0")
+    env = gym.make("CartPole-v0")
     input_dim = env.observation_space.shape[0]
     output_dim = env.action_space.n
     agent = Agent(input_dim, output_dim)
     rewards = []
     for episode in range(1000):
+        env.render()
         reward = run_episode(env, agent)
         rewards.append(reward)
         print(episode, reward)
