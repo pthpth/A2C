@@ -146,7 +146,7 @@ def run_episode(env, agent):
 
 
 def main():
-    env = gym.make("Assault-v0")
+    env = gym.make("Assault-ram-v0")
     input_dim = env.observation_space.shape[0]
     output_dim = env.action_space.n
     agent = Agent(input_dim, output_dim)
