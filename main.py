@@ -59,9 +59,10 @@ class Agent(object):
         # findinng the probability of the action taken in that time step n the trajectory
         action_prob = K.sum(action_prob_placeholder * action_onehot_placeholder, axis=1)
         log_action_prob = K.log(action_prob)
+        entropy_factor=0.005
         # this is the function we have minimize (its actually maximize thats why the negative sign)
         actor_loss = - log_action_prob * advantage_placeholder
-        actor_loss = K.mean(actor_loss-0.005 * entropy_placeholder)
+        actor_loss = K.mean(actor_loss-entropy_factor * entropy_placeholder)
         adam = Adam(learning_rate=0.001)
 
         critic_loss = advantage_placeholder ** 2 * 0.5
@@ -145,7 +146,7 @@ def run_episode(env, agent):
 
 
 def main():
-    env = gym.make("CartPole-v0")
+    env = gym.make("Assault-v0")
     input_dim = env.observation_space.shape[0]
     output_dim = env.action_space.n
     agent = Agent(input_dim, output_dim)

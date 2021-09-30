@@ -35,4 +35,5 @@ The grads will be:
 Implementation:
 - There will be 2 NNs one predicting the Q values of each state and then one predicting the State values of the current state.
 - The function we want to maximize the Expected difference between the _predicted max reward from this state_ _, and the actual reward we get_.
--
+
+Change the name of envoirment to try out different envoirments
